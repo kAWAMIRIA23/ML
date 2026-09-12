@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local leftovers
+_eval_report.json
+_extract_nb.py
+_inspect_model.py
+_eval_model.py
+_nb_cells.txt
+.ipynb_checkpoints/
