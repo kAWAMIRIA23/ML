@@ -239,11 +239,17 @@ Use YOLO as a suggestion engine: show the class and confidence, and hand the ite
 
 ## Live demo
 
-The Gradio app is deployed as a Hugging Face Space so it can be opened from any device:
+Run the app locally, then turn on a public Gradio link if you want to open it from a phone or another computer:
 
-https://huggingface.co/spaces/mariakawa/waste-classification
+```bash
+python app.py
+```
 
-Upload an image there. If the model is not confident enough, it returns: `Unable to confidently classify this image.`
+In `app.py`, change the last line to `demo.launch(share=True)` to get a temporary `*.gradio.live` URL.
+
+A hosted Hugging Face **Space** would keep the UI online permanently, but Gradio Spaces on free CPU now need a [Hugging Face PRO](https://huggingface.co/pro) plan. The trained weights and app files are still published on Hugging Face as a model repo:
+
+https://huggingface.co/mariakawa/waste-classification
 
 ## How to run
 
