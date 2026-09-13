@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Waste Classification with YOLOv8</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="intro">
+      <p class="eyebrow">YOLOv8n-cls · TrashNet</p>
+      <h1>Waste Classification</h1>
+      <p class="lede">
+        This Netlify page hosts the Gradio frontend. Upload a photo of cardboard,
+        glass, metal, paper, plastic, or trash. If the iframe does not load, open
+        <a href="https://huggingface.co/spaces/mariakawa/waste">the Hugging Face Space</a>.
+      </p>
+    </header>
+    <iframe
+      class="gradio"
+      title="Waste Classification Gradio app"
+      src="https://mariakawa-waste.hf.space/?__theme=light"
+      loading="lazy"
+      allow="clipboard-read; clipboard-write; camera"
+    ></iframe>
+  </main>
+</body>
+</html>

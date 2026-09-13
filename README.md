@@ -239,17 +239,26 @@ Use YOLO as a suggestion engine: show the class and confidence, and hand the ite
 
 ## Live demo
 
-Run the app locally, then turn on a public Gradio link if you want to open it from a phone or another computer:
+The Gradio frontend is hosted on Netlify. The page in `netlify-demo/` embeds the live YOLOv8 app from Hugging Face:
+
+https://huggingface.co/spaces/mariakawa/waste
+
+Publish the folder:
 
 ```bash
-python app.py
+npx netlify-cli login
+npx netlify-cli deploy --dir=netlify-demo --prod
 ```
 
-In `app.py`, change the last line to `demo.launch(share=True)` to get a temporary `*.gradio.live` URL.
+Or drag `netlify-demo` onto [Netlify Drop](https://app.netlify.com/drop). If the GitHub repo is connected to Netlify, `netlify.toml` already publishes `netlify-demo`.
 
-A hosted Hugging Face **Space** would keep the UI online permanently, but Gradio Spaces on free CPU now need a [Hugging Face PRO](https://huggingface.co/pro) plan. The trained weights and app files are still published on Hugging Face as a model repo:
+Local preview:
 
-https://huggingface.co/mariakawa/waste-classification
+```bash
+python -m http.server 8080 --directory netlify-demo
+```
+
+The original Gradio app is still `python app.py`. Weights and app files: https://huggingface.co/mariakawa/waste-classification
 
 ## How to run
 
@@ -289,3 +298,5 @@ python app.py
 | `app.py` | Hugging Face / Gradio app for YOLOv8 |
 | `a.py` | Local Gradio app for the MobileNet model |
 | `requirements.txt` | Dependencies for the Hugging Face Space |
+| `netlify-demo/` | Netlify page that embeds the Gradio Space |
+| `netlify.toml` | Publishes `netlify-demo` |
