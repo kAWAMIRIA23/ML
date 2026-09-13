@@ -16,6 +16,11 @@ WEIGHTS_CANDIDATES = (
     ROOT / "best.pt",
     ROOT / "weights" / "best.onnx",
 )
+# General object detector used to propose regions; waste class comes from best.pt.
+DET_WEIGHTS = ROOT / "yolov8n.pt"
+BOX_COLOR = (0, 220, 255)  # yellow-ish in BGR for drawing on BGR canvas
+TEXT_BG = (0, 180, 220)
+TEXT_FG = (0, 0, 0)
 
 
 def resolve_weights() -> Path:
@@ -28,7 +33,9 @@ def resolve_weights() -> Path:
 
 
 WEIGHTS = resolve_weights()
-model = YOLO(str(WEIGHTS))
+cls_model = YOLO(str(WEIGHTS))
+# Prefer a local detector if present; otherwise Ultralytics downloads yolov8n.pt.
+det_model = YOLO(str(DET_WEIGHTS) if DET_WEIGHTS.is_file() else "yolov8n.pt")
 
 
 def bgr_to_rgb(frame: np.ndarray) -> np.ndarray:
@@ -39,29 +46,48 @@ def rgb_to_bgr(frame: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
 
-def detection_lines(result, conf: float) -> list[str]:
-    """Build human-readable class / confidence lines from one YOLO result."""
-    lines: list[str] = []
-    names = result.names
+def classify_crop(rgb_crop: np.ndarray) -> tuple[str, float]:
+    """Return top waste class name and confidence for an RGB crop."""
+    result = cls_model.predict(rgb_crop, verbose=False)[0]
+    if result.probs is None:
+        # Detection-style classifier weights — use top box if present.
+        if result.boxes is not None and len(result.boxes):
+            box = result.boxes[0]
+            name = result.names[int(box.cls[0])]
+            return name, float(box.conf[0])
+        return "unknown", 0.0
+    name = result.names[int(result.probs.top1)]
+    return name, float(result.probs.top1conf)
 
-    if result.boxes is not None and len(result.boxes):
-        for box in result.boxes:
-            score = float(box.conf[0])
-            if score < conf:
-                continue
-            cls_id = int(box.cls[0])
-            lines.append(f"{names[cls_id]}: {score:.2f}")
-        return lines
 
-    # Classification head (YOLOv8-cls): report ranked class probabilities.
-    if result.probs is not None:
-        scores = result.probs.data.cpu().numpy()
-        ranked = sorted(enumerate(scores), key=lambda item: item[1], reverse=True)
-        for cls_id, score in ranked:
-            if float(score) < conf:
-                continue
-            lines.append(f"{names[int(cls_id)]}: {float(score):.2f}")
-    return lines
+def draw_label_box(
+    bgr: np.ndarray,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    label: str,
+) -> None:
+    """Draw a yellow bounding box with an uppercase class label (matches demo UI)."""
+    h, w = bgr.shape[:2]
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(w - 1, x2), min(h - 1, y2)
+    cv2.rectangle(bgr, (x1, y1), (x2, y2), BOX_COLOR, 2)
+
+    (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    ty1 = max(0, y1 - th - 8)
+    ty2 = ty1 + th + 8
+    cv2.rectangle(bgr, (x1, ty1), (x1 + tw + 8, ty2), TEXT_BG, -1)
+    cv2.putText(
+        bgr,
+        label,
+        (x1 + 4, ty2 - 6),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        TEXT_FG,
+        2,
+        cv2.LINE_AA,
+    )
 
 
 def format_results(all_lines: list[str]) -> str:
@@ -70,49 +96,66 @@ def format_results(all_lines: list[str]) -> str:
     return "\n".join(all_lines)
 
 
-def overlay_classify_box(rgb_image: np.ndarray, result, conf: float) -> np.ndarray:
-    """Draw a labeled frame when the model is classification-only (no boxes)."""
-    annotated = rgb_image.copy()
-    if result.probs is None:
-        return annotated
-
-    score = float(result.probs.top1conf)
-    if score < conf:
-        return annotated
-
-    name = result.names[int(result.probs.top1)]
-    height, width = annotated.shape[:2]
-    color = (31, 122, 70)
-    cv2.rectangle(annotated, (10, 10), (width - 10, height - 10), color, 3)
-    label = f"{name} {score:.2f}"
-    (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
-    cv2.rectangle(annotated, (18, 18), (28 + text_w, 32 + text_h), color, -1)
-    cv2.putText(
-        annotated,
-        label,
-        (24, 24 + text_h),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.9,
-        (255, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
-    return annotated
-
-
 def annotate_rgb(rgb_image: np.ndarray, conf: float) -> tuple[np.ndarray, list[str]]:
-    """Run YOLO predict on an RGB frame and return an RGB annotated image."""
-    results = model.predict(rgb_image, conf=conf, verbose=False)
-    result = results[0]
+    """
+    Detect objects, classify each region as a waste type, draw labeled boxes.
 
-    # result.plot() returns BGR; convert back to RGB for Gradio.
-    plotted_bgr = result.plot()
-    plotted_rgb = bgr_to_rgb(plotted_bgr)
+    Uses yolov8n for boxes + best.pt (TrashNet classifier) for waste labels so
+    the Detected Image shows per-item bounding boxes like METAL 0.87.
+    """
+    rgb = np.asarray(rgb_image)
+    if rgb.ndim != 3:
+        return rgb, []
 
-    if result.boxes is None or len(result.boxes) == 0:
-        plotted_rgb = overlay_classify_box(plotted_rgb, result, conf)
+    h, w = rgb.shape[:2]
+    lines: list[str] = []
+    canvas_bgr = rgb_to_bgr(rgb.copy())
 
-    return plotted_rgb, detection_lines(result, conf)
+    # If the primary weights are already a detector, use them directly.
+    if getattr(cls_model, "task", None) == "detect":
+        result = cls_model.predict(rgb, conf=conf, verbose=False)[0]
+        plotted = bgr_to_rgb(result.plot())
+        if result.boxes is not None:
+            for box in result.boxes:
+                score = float(box.conf[0])
+                if score < conf:
+                    continue
+                name = result.names[int(box.cls[0])]
+                lines.append(f"{name}: {score:.2f}")
+        return plotted, lines
+
+    det = det_model.predict(rgb, conf=max(conf, 0.25), verbose=False)[0]
+    boxes = det.boxes
+
+    if boxes is not None and len(boxes):
+        for box in boxes:
+            x1, y1, x2, y2 = (int(v) for v in box.xyxy[0].tolist())
+            # Pad slightly so thin objects still classify well.
+            pad = 4
+            xa, ya = max(0, x1 - pad), max(0, y1 - pad)
+            xb, yb = min(w, x2 + pad), min(h, y2 + pad)
+            crop = rgb[ya:yb, xa:xb]
+            if crop.size == 0:
+                continue
+
+            name, score = classify_crop(crop)
+            if score < conf:
+                continue
+
+            label = f"{name.upper()} {score:.2f}"
+            draw_label_box(canvas_bgr, x1, y1, x2, y2, label)
+            lines.append(f"{name}: {score:.2f}")
+
+    # No usable detections — classify the full image and draw one frame box.
+    if not lines:
+        name, score = classify_crop(rgb)
+        if score >= conf:
+            margin = max(8, min(h, w) // 40)
+            label = f"{name.upper()} {score:.2f}"
+            draw_label_box(canvas_bgr, margin, margin, w - margin, h - margin, label)
+            lines.append(f"{name}: {score:.2f}")
+
+    return bgr_to_rgb(canvas_bgr), lines
 
 
 def read_webcam_frame() -> np.ndarray | None:
@@ -153,8 +196,8 @@ def infer_video(video_path, conf: float):
             break
 
         frame_rgb = bgr_to_rgb(frame_bgr)
-        detected_rgb, lines = annotate_rgb(frame_rgb, conf)
-        collected.extend(lines)
+        detected_rgb, frame_lines = annotate_rgb(frame_rgb, conf)
+        collected.extend(frame_lines)
 
         if first_input is None:
             first_input = frame_rgb
@@ -197,7 +240,6 @@ with gr.Blocks(title="Waste Classification using YOLOv8") as demo:
     gr.Markdown("# Waste Classification using YOLOv8")
 
     with gr.Row():
-        # Left: config / source panel
         with gr.Column(scale=1):
             gr.Markdown("### Image/Video Config")
             source = gr.Radio(
@@ -229,7 +271,6 @@ with gr.Blocks(title="Waste Classification using YOLOv8") as demo:
             )
             detect_btn = gr.Button("Detect Objects", variant="primary")
 
-        # Right: results panel
         with gr.Column(scale=2):
             with gr.Row():
                 input_view = gr.Image(label="Uploaded Image", interactive=False)

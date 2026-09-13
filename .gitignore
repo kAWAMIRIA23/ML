@@ -11,8 +11,14 @@ wheels/
 
 # Local leftovers
 _eval_report.json
+_preview.jpg
 _extract_nb.py
 _inspect_model.py
 _eval_model.py
 _nb_cells.txt
 .ipynb_checkpoints/
+
+# Auto-downloaded Ultralytics base detector (fetched at runtime if missing)
+yolov8n.pt
+yolov8*.pt
+!weights/best.pt
